@@ -1,0 +1,251 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "diag/trace.h"
+
+/* Kernel includes. */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "timers.h"
+#include "semphr.h"
+
+#define CCM_RAM __attribute__((section(".ccmram")))
+
+
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
+#pragma GCC diagnostic ignored "-Wreturn-type"
+#pragma GCC diagnostic pop
+// ----------------------------------------------------------------------------
+
+
+#define NUM_TIMERS 6
+TaskHandle_t sendingtaskHandle =NULL ;
+TaskHandle_t receivingtaskHandle =NULL ;
+SemaphoreHandle_t SENDER_FUNC_semaphore =NULL ;
+SemaphoreHandle_t RECEIVER_FUNC_semaphore =NULL ;
+QueueHandle_t my_Q ;
+TimerHandle_t TS1;
+TimerHandle_t TS2;
+int lower=0;
+int upper=0;
+int x=0;
+
+
+TimerHandle_t RS1 = NULL;
+
+
+int succ_count=0;
+int Blocked_count=0;
+int fail_count=0;
+#define RECEIVER_FUNC_PERIOD pdMS_TO_TICKS (100)
+
+ void SENDER_FUNC (void*parameters)
+{
+  BaseType_t xStatus ;
+  TickType_t PERIOD ;
+char SendingMsg[100];
+while(1)
+    {
+	if(xSemaphoreTake (SENDER_FUNC_semaphore,portMAX_DELAY))
+	{
+	PERIOD=xTaskGetTickCount();
+	sprintf(SendingMsg,"Time is :%lu ",PERIOD);
+	xStatus=xQueueSend(my_Q,(void*)SendingMsg ,(TickType_t) 0);
+
+	if (xStatus==pdPASS)
+	{
+		succ_count++;
+	//	trace_printf("success\t");
+	}
+	else
+		Blocked_count++;
+    }
+    }
+}
+
+ void RECEIVER_FUNC (void *parameters)
+{ char RECEIVEING_MSG[100];
+   BaseType_t status ;
+
+	while(1)
+{
+		if(xSemaphoreTake(RECEIVER_FUNC_semaphore,portMAX_DELAY))
+		{
+		status=xQueueReceive(my_Q,(void*)RECEIVEING_MSG ,(TickType_t) 0);
+		if(status==pdPASS)
+		{
+			fail_count++;
+		 }
+		else
+		{
+			//printf("RECEIVE FAILED!!!!!\n");
+		}
+}
+}
+}
+ void Receive_Callback (TimerHandle_t xTimer )
+{
+	if(fail_count<500)
+	{
+		xSemaphoreGive(RECEIVER_FUNC_semaphore);
+	}
+	else
+		Restart();
+}
+
+
+
+ void SENDER_FUNC1_Callback (TimerHandle_t xTimer )
+ {
+	 xSemaphoreGive (SENDER_FUNC_semaphore);
+ }
+
+ void SENDER_FUNC2_Callback (TimerHandle_t xTimer )
+ {
+	 xSemaphoreGive (SENDER_FUNC_semaphore);
+ }
+
+
+
+ int Restart()
+{
+
+if(x!=0)
+{
+	printf("SENDER_FUNC Period %d\n",(getrandomnumber1()));
+}
+
+printf("The Number of Success Messages %d\n", succ_count);
+printf("The Number of Failed Messages %d\n",Blocked_count);
+printf("The Number of Received Messages %d\n\n",fail_count);
+succ_count=0;
+Blocked_count=0;
+fail_count=0;
+xQueueReset (my_Q);
+if(x<6)
+{
+	xTimerChangePeriod(TS1,pdMS_TO_TICKS( getrandomnumber2()),0 );
+	xTimerChangePeriod(TS2,pdMS_TO_TICKS(getrandomnumber2()),0 );
+
+    xTimerReset(RS1,0);
+    x++;
+  }
+else {
+	   printf("Game Over \n");
+		xTimerDelete(TS1,0);
+		xTimerDelete(TS2,0);
+		xTimerDelete(RS1,0);
+      }
+return 0;
+}
+ int getrandomnumber1(int lower,int upper){
+ 	 lower = 50+(30*x)-30;
+ 	 upper = 150+(50*x)-50;
+ 	 srand(time(0));
+ 	 int num = (rand() % (upper - lower + 1)) + lower;
+ 	 return num;
+ }
+ int getrandomnumber2(int lower,int upper){
+ 	 lower = 50+(30*x);
+ 	 upper = 150+(50*x);
+ 	 int num1 = (rand() % (upper - lower + 1)) + lower;
+ 	 return num1;
+ }
+
+int main()
+{   char Msgs[100];
+my_Q=xQueueCreate(20,sizeof(Msgs));
+vSemaphoreCreateBinary(SENDER_FUNC_semaphore);
+vSemaphoreCreateBinary(RECEIVER_FUNC_semaphore);
+TS1=xTimerCreate("TS1",pdMS_TO_TICKS(getrandomnumber2 ) ,pdTRUE,( void * ) 0, SENDER_FUNC1_Callback );
+TS2=xTimerCreate("TS2",pdMS_TO_TICKS( getrandomnumber2) ,pdTRUE,( void * ) 0, SENDER_FUNC2_Callback );
+
+RS1=xTimerCreate("RS1",RECEIVER_FUNC_PERIOD,pdTRUE,(void*)0,Receive_Callback);
+xTaskCreate(SENDER_FUNC,"SENDER_FUNC_Task",1000,(void*) 0 ,1 ,&sendingtaskHandle );
+xTaskCreate(SENDER_FUNC,"Send2r_Task",1000,(void*) 0 ,1 ,&sendingtaskHandle );
+
+xTaskCreate(RECEIVER_FUNC,"RECEIVER_FUNC_Task",1000,(void*) 0 ,2 ,&receivingtaskHandle );
+Restart();
+vTaskStartScheduler();
+return 0;
+}
+
+
+
+
+/*----------------------------------------------------------------------*/
+void vApplicationMallocFailedHook( void )
+{
+	/* Called if a call to pvPortMalloc() fails because there is insufficient
+	free memory available in the FreeRTOS heap.  pvPortMalloc() is called
+	internally by FreeRTOS API functions that create tasks, queues, software
+	timers, and semaphores.  The size of the FreeRTOS heap is set by the
+	configTOTAL_HEAP_SIZE configuration constant in FreeRTOSConfig.h. */
+	for( ;; );
+}
+/*-----------------------------------------------------------*/
+
+void vApplicationStackOverflowHook( TaskHandle_t pxTask, char *pcTaskName )
+{
+	( void ) pcTaskName;
+	( void ) pxTask;
+
+	/* Run time stack overflow checking is performed if
+	configconfigCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2.  This hook
+	function is called if a stack overflow is detected. */
+	for( ;; );
+}
+/*-----------------------------------------------------------*/
+
+void vApplicationIdleHook( void )
+{
+volatile size_t xFreeStackSpace;
+
+	/* This function is called on each cycle of the idle task.  In this case it
+	does nothing useful, other than report the amout of FreeRTOS heap that
+	remains unallocated. */
+	xFreeStackSpace = xPortGetFreeHeapSize();
+
+	if( xFreeStackSpace > 100 )
+	{
+		/* By now, the kernel has allocated everything it is going to, so
+		if there is a lot of heap remaining unallocated then
+		the value of configTOTAL_HEAP_SIZE in FreeRTOSConfig.h can be
+		reduced accordingly. */
+	}
+}
+
+void vApplicationTickHook(void) {
+}
+
+StaticTask_t xIdleTaskTCB CCM_RAM;
+StackType_t uxIdleTaskStack[configMINIMAL_STACK_SIZE] CCM_RAM;
+
+void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize) {
+  /* Pass out a pointer to the StaticTask_t structure in which the Idle task's
+  state will be stored. */
+  *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+
+  /* Pass out the array that will be used as the Idle task's stack. */
+  *ppxIdleTaskStackBuffer = uxIdleTaskStack;
+
+  /* Pass out the size of the array pointed to by *ppxIdleTaskStackBuffer.
+  Note that, as the array is necessarily of type StackType_t,
+  configMINIMAL_STACK_SIZE is specified in words, not bytes. */
+  *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+static StaticTask_t xTimerTaskTCB CCM_RAM;
+static StackType_t uxTimerTaskStack[configTIMER_TASK_STACK_DEPTH] CCM_RAM;
+
+/* configUSE_STATIC_ALLOCATION and configUSE_TIMERS are both set to 1, so the
+application must provide an implementation of vApplicationGetTimerTaskMemory()
+to provide the memory that is used by the Timer service task. */
+void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer, StackType_t **ppxTimerTaskStackBuffer, uint32_t *pulTimerTaskStackSize) {
+  *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+  *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+  *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
+}
